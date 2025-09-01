@@ -1,0 +1,18 @@
+# Node.js / React frontend
+node_modules/
+build/
+.env
+.DS_Store
+
+# Python backend
+venv/
+__pycache__/
+*.pyc
+.env
+data/
+*.sqlite3
+
+# IDEs and editors
+.vscode/
+.idea/
+*.log
