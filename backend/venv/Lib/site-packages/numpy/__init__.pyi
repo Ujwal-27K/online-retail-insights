@@ -9,6 +9,7 @@ import enum
 from abc import abstractmethod
 from types import TracebackType, MappingProxyType
 from contextlib import ContextDecorator
+from contextlib import contextmanager
 
 if sys.version_info >= (3, 9):
     from types import GenericAlias
@@ -41,6 +42,7 @@ from numpy._typing import (
     # DTypes
     DTypeLike,
     _DTypeLike,
+    _DTypeLikeVoid,
     _SupportsDType,
     _VoidDTypeLike,
 
@@ -182,6 +184,7 @@ from collections.abc import (
 from typing import (
     Literal as L,
     Any,
+    Generator,
     Generic,
     IO,
     NoReturn,
@@ -205,7 +208,6 @@ from numpy import (
     lib as lib,
     linalg as linalg,
     ma as ma,
-    matrixlib as matrixlib,
     polynomial as polynomial,
     random as random,
     testing as testing,
@@ -455,7 +457,6 @@ from numpy.lib.function_base import (
     digitize as digitize,
     cov as cov,
     corrcoef as corrcoef,
-    msort as msort,
     median as median,
     sinc as sinc,
     hamming as hamming,
@@ -619,6 +620,7 @@ from numpy.lib.utils import (
     lookfor as lookfor,
     byte_bounds as byte_bounds,
     safe_eval as safe_eval,
+    show_runtime as show_runtime,
 )
 
 from numpy.matrixlib import (
@@ -935,6 +937,7 @@ _FlatIterSelf = TypeVar("_FlatIterSelf", bound=flatiter)
 
 @final
 class flatiter(Generic[_NdArraySubClass]):
+    __hash__: ClassVar[None]
     @property
     def base(self) -> _NdArraySubClass: ...
     @property
@@ -1433,7 +1436,7 @@ _ShapeType2 = TypeVar("_ShapeType2", bound=Any)
 _NumberType = TypeVar("_NumberType", bound=number[Any])
 
 # There is currently no exhaustive way to type the buffer protocol,
-# as it is implemented exclusivelly in the C API (python/typing#593)
+# as it is implemented exclusively in the C API (python/typing#593)
 _SupportsBuffer = Union[
     bytes,
     bytearray,
@@ -1476,6 +1479,7 @@ class _SupportsImag(Protocol[_T_co]):
     def imag(self) -> _T_co: ...
 
 class ndarray(_ArrayOrScalarCommon, Generic[_ShapeType, _DType_co]):
+    __hash__: ClassVar[None]
     @property
     def base(self) -> None | ndarray: ...
     @property
@@ -1547,6 +1551,12 @@ class ndarray(_ArrayOrScalarCommon, Generic[_ShapeType, _DType_co]):
         /,
     ) -> ndarray[_ShapeType2, _DType]: ...
 
+    @overload
+    def __getitem__(self, key: (
+        NDArray[integer[Any]]
+        | NDArray[bool_]
+        | tuple[NDArray[integer[Any]] | NDArray[bool_], ...]
+    )) -> ndarray[Any, _DType_co]: ...
     @overload
     def __getitem__(self, key: SupportsIndex | tuple[SupportsIndex, ...]) -> Any: ...
     @overload
@@ -2734,8 +2744,6 @@ class bool_(generic):
     __gt__: _ComparisonOp[_NumberLike_co, _ArrayLikeNumber_co]
     __ge__: _ComparisonOp[_NumberLike_co, _ArrayLikeNumber_co]
 
-bool8 = bool_
-
 class object_(generic):
     def __init__(self, value: object = ..., /) -> None: ...
     @property
@@ -2747,8 +2755,6 @@ class object_(generic):
     def __int__(self) -> int: ...
     def __float__(self) -> float: ...
     def __complex__(self) -> complex: ...
-
-object0 = object_
 
 # The `datetime64` constructors requires an object with the three attributes below,
 # and thus supports datetime duck typing
@@ -2872,7 +2878,6 @@ byte = signedinteger[_NBitByte]
 short = signedinteger[_NBitShort]
 intc = signedinteger[_NBitIntC]
 intp = signedinteger[_NBitIntP]
-int0 = signedinteger[_NBitIntP]
 int_ = signedinteger[_NBitInt]
 longlong = signedinteger[_NBitLongLong]
 
@@ -2954,7 +2959,6 @@ ubyte = unsignedinteger[_NBitByte]
 ushort = unsignedinteger[_NBitShort]
 uintc = unsignedinteger[_NBitIntC]
 uintp = unsignedinteger[_NBitIntP]
-uint0 = unsignedinteger[_NBitIntP]
 uint = unsignedinteger[_NBitInt]
 ulonglong = unsignedinteger[_NBitLongLong]
 
@@ -3061,7 +3065,10 @@ class flexible(generic): ...  # type: ignore
 # depending on whether or not it's used as an opaque bytes sequence
 # or a structure
 class void(flexible):
-    def __init__(self, value: _IntLike_co | bytes, /) -> None: ...
+    @overload
+    def __init__(self, value: _IntLike_co | bytes, /, dtype : None = ...) -> None: ...
+    @overload
+    def __init__(self, value: Any, /, dtype: _DTypeLikeVoid) -> None: ...
     @property
     def real(self: _ArraySelf) -> _ArraySelf: ...
     @property
@@ -3078,8 +3085,6 @@ class void(flexible):
         key: str | list[str] | SupportsIndex,
         value: ArrayLike,
     ) -> None: ...
-
-void0 = void
 
 class character(flexible):  # type: ignore
     def __int__(self) -> int: ...
@@ -3101,7 +3106,6 @@ class bytes_(character, bytes):
     def tolist(self) -> bytes: ...
 
 string_ = bytes_
-bytes0 = bytes_
 
 class str_(character, str):
     @overload
@@ -3116,7 +3120,6 @@ class str_(character, str):
     def tolist(self) -> str: ...
 
 unicode_ = str_
-str0 = str_
 
 #
 # Constants
@@ -3136,10 +3139,6 @@ inf: Final[float]
 infty: Final[float]
 nan: Final[float]
 pi: Final[float]
-
-CLIP: L[0]
-WRAP: L[1]
-RAISE: L[2]
 
 ERR_IGNORE: L[0]
 ERR_WARN: L[1]
@@ -3209,7 +3208,7 @@ class ufunc:
     # can't type them very precisely.
     reduce: Any
     accumulate: Any
-    reduce: Any
+    reduceat: Any
     outer: Any
     # Similarly at won't be defined for ufuncs that return multiple
     # outputs, so we can't type it very precisely.
@@ -3356,6 +3355,11 @@ class errstate(Generic[_CallType], ContextDecorator):
         traceback: None | TracebackType,
         /,
     ) -> None: ...
+
+@contextmanager
+def _no_nep50_warning() -> Generator[None, None, None]: ...
+def _get_promotion_state() -> str: ...
+def _set_promotion_state(state: str, /) -> None: ...
 
 class ndenumerate(Generic[_ScalarType]):
     iter: flatiter[NDArray[_ScalarType]]
@@ -3740,7 +3744,7 @@ class memmap(ndarray[_ShapeType, _DType_co]):
     ) -> Any: ...
     def flush(self) -> None: ...
 
-# TODO: Add a mypy plugin for managing functions whose output type is dependant
+# TODO: Add a mypy plugin for managing functions whose output type is dependent
 # on the literal value of some sort of signature (e.g. `einsum` and `vectorize`)
 class vectorize:
     pyfunc: Callable[..., Any]
@@ -3792,7 +3796,7 @@ class poly1d:
     @coefficients.setter
     def coefficients(self, value: NDArray[Any]) -> None: ...
 
-    __hash__: None  # type: ignore
+    __hash__: ClassVar[None]  # type: ignore
 
     @overload
     def __array__(self, t: None = ...) -> NDArray[Any]: ...
